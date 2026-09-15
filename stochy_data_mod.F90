@@ -123,7 +123,7 @@ module stochy_data_mod
      do_sppt = .false.
      if (is_rootpe()) then
        print*, 'The SPPT namelist variable config_sppt(:) is not specified.'
-       print*, 'do_sppt is being set; returning.'
+       print*, 'do_sppt is being reset to false; returning.'
      endif
      iret = -1 
      return
