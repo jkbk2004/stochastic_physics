@@ -119,13 +119,13 @@ module stochy_data_mod
 
    if (is_rootpe()) print *,'nsppt = ',nsppt
 
-   if (nsppt == 0) then
+   if (do_sppt .and. nsppt == 0) then
      do_sppt = .false.
      if (is_rootpe()) then
        print*, 'The SPPT namelist variable config_sppt(:) is not specified.'
-       print*, 'do_sppt is being set; returning.'
+       print*, 'do_sppt is being reset to false; returning.'
      endif
-     iret = -1
+     iret = -1 
      return
    endif
 #ifdef STOCH_PHYS_DIAG
