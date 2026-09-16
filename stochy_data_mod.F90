@@ -2,12 +2,19 @@
 !! namelist and determines the number of random patterns.
 module stochy_data_mod
 
+
+#ifdef MPAS
+ use mpas_pool_routines
+ use stochy_nml_rec
+#endif
 ! set up and initialize stochastic random patterns.
 
  use spectral_transforms, only: len_trie_ls,len_trio_ls,ls_dim,ls_max_node,&
                               skeblevs,levs,jcap,lonf,latg,initialize_spectral
  use stochy_namelist_def
+#ifndef MPAS
  use constants_mod, only : radius
+#endif
  use mpi_wrapper, only: mp_bcst, is_rootpe, mype
  use stochy_patterngenerator_mod, only: random_pattern, patterngenerator_init,&
  getnoise, getnoise_un, patterngenerator_advance, patterngenerator_advance_jb, ndimspec, &
@@ -35,6 +42,9 @@ module stochy_data_mod
  integer, public :: nlndp=0 ! this is the number of different patterns (determined by the tau/lscale input)
  integer, public :: nspp =0 ! this is the number of different patterns (determined by the tau/lscale input)
  real(kind=kind_dbl_prec), public,allocatable :: sl(:)
+#ifdef MPAS
+ real(kind=kind_dbl_prec), public, parameter :: radius = 6.3712e+6
+#endif
 
  real(kind=kind_phys),public, allocatable :: vfact_sppt(:),vfact_shum(:),vfact_skeb(:),vfact_spp(:)
  real(kind=kind_phys),public, allocatable :: skeb_vwts(:,:)
@@ -47,18 +57,27 @@ module stochy_data_mod
  character(len=2048) :: stoch_restfile = './INPUT/ocn_stoch.res.nc' ! same length as restartfiles in mom_cap.F90
 
  contains
-!>@brief The subroutine 'init_stochdata' determins which stochastic physics
+!>@brief The subroutine 'init_stochdata' determines which stochastic physics
 !!pattern genertors are needed.
 !>@details it reads the nam_stochy namelist and allocates necessary arrays
+#ifdef MPAS
+ subroutine init_stochdata(domain,mype,nlevs,delt,iret)
+#else
  subroutine init_stochdata(nlevs,delt,input_nml_file,fn_nml,nlunit,iret)
+#endif
 !\callgraph
 
 ! initialize random patterns.
    use netcdf
    implicit none
+#ifdef MPAS
+   type(domain_type),intent(inout):: domain
+   integer, intent(in) :: mype,nlevs
+#else
    integer, intent(in) :: nlunit,nlevs
    character(len=*),  intent(in) :: input_nml_file(:)
    character(len=64), intent(in) :: fn_nml
+#endif
    real(kind=kind_phys), intent(in) :: delt
    integer, intent(out) :: iret
    real(kind=kind_dbl_prec) :: ones(6)
@@ -78,7 +97,11 @@ module stochy_data_mod
    iret=0
 ! read in namelist
 
+#ifdef MPAS
+   call get_nml_rec (domain,mype,real(delt),iret)
+#else
    call compns_stochy (mype,size(input_nml_file,1),input_nml_file(:),fn_nml,nlunit,real(delt,kind=kind_phys),iret)
+#endif
 
    if (iret/=0) return  ! need to make sure that non-zero irets are being trapped.
    if ( (.NOT. do_sppt) .AND. (.NOT. do_shum) .AND. (.NOT. do_skeb)  .AND. (lndp_type==0) .AND. (.NOT. do_spp)) return
@@ -93,7 +116,24 @@ module stochy_data_mod
         exit
      endif
    enddo
+
    if (is_rootpe()) print *,'nsppt = ',nsppt
+
+   if (do_sppt .and. nsppt == 0) then
+     do_sppt = .false.
+     if (is_rootpe()) then
+       print*, 'The SPPT namelist variable config_sppt(:) is not specified.'
+       print*, 'do_sppt is being reset to false; returning.'
+     endif
+     iret = -1 
+     return
+   endif
+#ifdef STOCH_PHYS_DIAG
+   if (is_rootpe()) print *,'sppt_lscale = ',sppt_lscale
+   if (is_rootpe()) print *,'sppt_tau = ',sppt_tau
+   if (is_rootpe()) print *,'spptint = ',spptint
+#endif
+
    do n=1,size(shum)
      if (shum(n) > 0) then
         nshum=nshum+1
@@ -102,6 +142,7 @@ module stochy_data_mod
      endif
    enddo
    if (is_rootpe()) print *,'nshum = ',nshum
+
    do n=1,size(skeb)
      if (skeb(n) > 0) then
         nskeb=nskeb+1
@@ -110,6 +151,7 @@ module stochy_data_mod
      endif
    enddo
    if (is_rootpe()) print *,'nskeb = ',nskeb
+
    ! Draper: nlndp>1 was not properly coded. Hardcode to 1 for now
    !do n=1,size(lndp_z0)
    !  if (lndp_z0(n) > 0 .or. lndp_zt(n)>0 .or. lndp_hc(n)>0 .or. &
@@ -121,8 +163,10 @@ module stochy_data_mod
    !enddo
    if (n_var_lndp>0) nlndp=1
    if (n_var_spp>0) nspp=n_var_spp
+#ifdef STOCH_PHYS_DIAG
    if (is_rootpe())  print *,' nlndp   = ', nlndp
    if (is_rootpe())  print *,' nspp   = ', nspp
+#endif
 
    if (nsppt > 0) allocate(rpattern_sppt(nsppt))
    if (nshum > 0) allocate(rpattern_shum(nshum))
@@ -154,7 +198,9 @@ module stochy_data_mod
    ! no spinup needed if initial patterns are defined correctly.
    if (nsppt > 0) then
       if (is_rootpe()) then
+#ifdef STOCH_PHYS_DIAG
          print *, 'Initialize random pattern for SPPT'
+#endif
          if (stochini) then
             ierr=NF90_INQ_VARID(stochlun,"sppt_seed", varid1)
             if (ierr .NE. 0) then
@@ -476,15 +522,18 @@ module stochy_data_mod
    deallocate(noise_e,noise_o)
  end subroutine init_stochdata
 
- subroutine init_stochdata_ocn(nlevs,delt,iret)
+ subroutine init_stochdata_ocn(nlevs,delt,iret,on_mpi_master)
 
  use netcdf
  use compns_stochy_mod, only : compns_stochy_ocn
+#ifndef MPAS
  use mpp_domains_mod,     only: mpp_broadcast_domain,MPP_DOMAIN_TIME,mpp_domains_init ,mpp_domains_set_stack_size
+#endif
 ! initialize random patterns.  A spinup period of spinup_efolds times the
 ! temporal time scale is run for each pattern.
    integer, intent(in) :: nlevs
    real(kind=kind_dbl_prec), intent(in) :: delt
+   logical, intent(in) :: on_mpi_master
    integer, intent(out) :: iret
 
    integer :: nn,nm,stochlun,n,jcapin,n2
@@ -499,7 +548,7 @@ module stochy_data_mod
 
    pi    = 4.0d0*atan(1.0d0)
    iret=0
-   call compns_stochy_ocn (delt,iret)
+   call compns_stochy_ocn (delt,iret,on_mpi_master)
    if(is_rootpe()) print*,'in init stochdata_ocn'
    if ( pert_epbl .OR. do_ocnsppt .OR. do_ocnskeb ) then
       if ( pert_epbl .OR. do_ocnsppt ) call initialize_spectral(gis_stochy_ocn)

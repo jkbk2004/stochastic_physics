@@ -422,7 +422,7 @@ module compns_stochy_mod
       return
       end subroutine compns_stochy
 
-      subroutine compns_stochy_ocn (deltim,iret)
+      subroutine compns_stochy_ocn (deltim,iret,on_mpi_master)
 !$$$  Subprogram Documentation Block
 !
 ! Subprogram:  compns     Check and compute namelist frequencies
@@ -452,12 +452,11 @@ module compns_stochy_mod
 
 
       use stochy_namelist_def
-      use mpp_mod ,only: mpp_pe,mpp_root_pe
-
       implicit none
 
 
       real(kind=kind_dbl_prec),              intent(in)  :: deltim
+      logical,              intent(in) :: on_mpi_master
       integer,              intent(out) :: iret
       real(kind=kind_dbl_prec) tol,l_min
       real(kind=kind_dbl_prec) :: rerth,circ
@@ -515,8 +514,8 @@ module compns_stochy_mod
       read(nlunit,nam_stochy)
       close(nlunit)
 
-      if (mpp_pe()==mpp_root_pe()) then
-      print *,' in compns_stochy_ocn'
+      if (on_mpi_master) then
+         print *,' in compns_stochy_ocn'
       endif
 
 ! PJP stochastic physics additions
@@ -553,7 +552,9 @@ module compns_stochy_mod
       ENDIF
 !calculate ntrunc if not supplied
      if (ntrunc .LT. 1) then  
-        if (mpp_pe()==mpp_root_pe()) print*,'ntrunc not supplied, calculating'
+        if (on_mpi_master) then
+           print*,'ntrunc not supplied, calculating'
+        endif
         circ=2*3.1415928*rerth ! start with lengthscale that is circumference of the earth
         l_min=circ
         do k=1,5
@@ -563,11 +564,15 @@ module compns_stochy_mod
        enddo
        !ntrunc=1.5*circ/l_min
        ntrunc=circ/l_min
-       if (mpp_pe()==mpp_root_pe()) print*,'ntrunc calculated from l_min',l_min,ntrunc
+       if (on_mpi_master) then
+          print*,'ntrunc calculated from l_min',l_min,ntrunc
+       endif
      endif
      ! ensure lat_s is a mutiple of 4 with a reminader of two
      ntrunc=INT((ntrunc+1)/four)*four+2
-     if (mpp_pe()==mpp_root_pe()) print*,'NOTE ntrunc adjusted for even nlats',ntrunc
+     if (on_mpi_master) then
+        print*,'NOTE ntrunc adjusted for even nlats',ntrunc
+     endif
 
 ! set up gaussian grid for ntrunc if not already defined. 
      if (lon_s.LT.1 .OR. lat_s.LT.1) then
@@ -576,13 +581,15 @@ module compns_stochy_mod
 ! Grid needs to be larger since interpolation is bi-linear
         lat_s=lat_s*2
         lon_s=lon_s*2
-        if (mpp_pe()==mpp_root_pe()) print*,'gaussian grid not set, defining here',lon_s,lat_s
+        if (on_mpi_master) then
+           print*,'gaussian grid not set, defining here',lon_s,lat_s
+        endif
      endif
 ! - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 !
 !  All checks are successful.
 !
-      if (mpp_pe()==mpp_root_pe()) then
+     if (on_mpi_master) then
          print *, 'ocean stochastic physics'
          print *, ' pert_epbl : ', pert_epbl
          print *, ' do_ocnsppt : ', do_ocnsppt
